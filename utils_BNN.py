@@ -5,41 +5,81 @@ import torch.nn.functional as F
 
 
 # Returns value of the evidence lower bound (ELBO)
-class ELBO(nn.module):
-    def _init_(self, log_likelihood_loss=nn.CrossEntropyLoss()):
-        self.log_likelihoof_loss = log_likelihood_loss
+class neg_ELBO(nn.Module):
+    """
+    the negative ELBO can be decomposed into the expected negative log likelihood ENLL and the KL-Divergence
+    between the variational and the prior distribution
+    """
 
-    def elbo_value(self, outputs, y):
-        value_log_likelihood_loss = self.log_likelihoof_loss(outputs,y)
-        return -self.value_log_likelihood_loss  # + d_kl
+    def __init__(self, loss=nn.CrossEntropyLoss()):
+        super(neg_ELBO, self).__init__()
+        self.loss = loss
 
-    torch.conv2d()
+    def forward(self, outputs, y, kl_div, beta):
+        ENLL = self.loss(outputs,y)
+        loss = ENLL + beta * kl_div
+        return loss
 
 
-# Normal distribution
-class Normal():
-    # scalar version
-    def __init__(self, mu, logvar):
-        self.mu = mu
-        self.logvar = logvar
-        self.shape = mu.size()
+def kl_divergence(q_mean, q_std, p_mean, p_std):
+    return torch.sum(0.5 * (-torch.log(q_std**2/p_std**2) + (q_std**2 + (q_mean-p_mean)**2)/(p_std**2) - 1)) #
 
-        super(Normal, self).__init__()
 
-    def logpdf(self, x):
-        c = - float(0.5 * math.log(2 * math.pi))
-        return c - 0.5 * self.logvar - (x - self.mu).pow(2) / (2 * torch.exp(self.logvar))
+class Logger:
+    """
+    Logs parameters of the model
+    """
+    def __init__(self, model):
+        self.model = model
 
-    def pdf(self, x):
-        return torch.exp(self.logpdf(x))
+    def get_variance(self, var_list):
+        for c in self.model.children():
+            try:
+                var_list.append((c.sigma ** 2).reshape(-1, ).detach().cpu().numpy())
+            except:
+                pass
 
-    def sample(self):
-        if self.mu.is_cuda:
-            eps = torch.cuda.FloatTensor(self.shape).normal_()
-        else:
-            eps = torch.FloatTensor(self.shape).normal_()
-        # local reparameterization trick
-        return self.mu + torch.exp(0.5 * self.logvar) * eps
+        return var_list
 
-    def entropy(self):
-        return 0.5 * math.log(2. * math.pi * math.e) + 0.5 * self.logvar
+    def get_logvariance(self, var_list):
+        for c in self.model.children():
+            try:
+                var_list.append((torch.exp(c.logvar)).reshape(-1, ).detach().cpu().numpy())
+            except:
+                pass
+
+        return var_list
+
+    def get_mean(self, mean_list):
+        for c in self.model.children():
+            try:
+                mean_list.append((c.mean).reshape(-1, ).detach().cpu().numpy())
+            except:
+                pass
+
+        return mean_list
+
+    def get_mean_gradients(self, mean_grads):
+        for params in list(self.model.named_parameters()):
+            if 'mean' in params[0]:
+                mean_grads.append(params[1].grad.reshape(-1, ).detach().cpu().numpy())
+
+        return mean_grads
+
+    def get_variance_gradients(self, var_grads):
+        for params in list(self.model.named_parameters()):
+            if 'sigma' or 'logvar' in params[0]:
+                var_grads.append(params[1].grad.reshape(-1, ).detach().cpu().numpy())
+                # var_grads.append(params[1].grad)
+
+        return var_grads
+
+    def get_logvariance_gradients(self, var_grads):
+        for params in list(self.model.named_parameters()):
+            if 'logvar' in params[0]:
+                var_grads.append(params[1].grad.reshape(-1, ).detach().cpu().numpy())
+                # var_grads.append(params[1].grad)
+
+        return var_grads
+
+
